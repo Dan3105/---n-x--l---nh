@@ -188,7 +188,7 @@ class NeuralStyleTransfer(tf.keras.Model):
 
     result = self.decoder(t)
 
-    return result
+    return result[0]
 
   @property
   def metrics(self):
