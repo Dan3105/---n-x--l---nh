@@ -279,10 +279,12 @@ while True:
         if recording:
             window['-BTN COMBINE-'].update(disabled=False)
             window['-BTN Open Camera-'].update(button_color=DEFAULT_BTN_COLOR)
+            video.release()
         # Xử lý khi đang tắt cam
         else:
             window['-BTN COMBINE-'].update(disabled=True)
             window['-BTN Open Camera-'].update(button_color=CAPTURING_BTN_COLOR)
+            video = cv2.VideoCapture(0)
         clear_result()
         recording = not recording
 
