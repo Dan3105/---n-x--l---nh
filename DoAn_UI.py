@@ -1,8 +1,10 @@
 import PySimpleGUI as sg
 import cv2
 import numpy as np
-from PIL import ImageColor
+from PIL import ImageColor, Image
 import os
+import tensorflow as tf
+from stylemodel import load_neural_model, NeuralStyleTransfer
 
 MAX_TEMPLATES_IN_PAGE = 8
 
@@ -25,27 +27,47 @@ DEFAULT_IMG = np.zeros((256, 256, 3), np.uint8)
 DEFAULT_IMG[:] = ImageColor.getrgb(IMAGE_BG_COLOR)
 
 
+def decode_and_resize(path):
+    image = tf.io.read_file(path)
+    image = tf.image.decode_jpeg(image, channels=3)
+    image = tf.image.convert_image_dtype(image, dtype='float32')
+    image = tf.image.resize(image, IMAGE_SIZE)
+    return image.numpy()
+
+def decode_and_resize_template(path):
+    image = tf.io.read_file(path)
+    image = tf.image.decode_jpeg(image, channels=3)
+    image = tf.image.convert_image_dtype(image, dtype='float32')
+    image = tf.image.resize(image, TEMPLATE_IMAGE_SIZE)
+    return image.numpy()
+
+def transform_img_255(image):
+    return cv2.cvtColor(image * 255, cv2.COLOR_BGR2RGB)
+
+
 def get_all_styles():
     images = []
     folder = f"{os.getcwd()}\\Styles_Template"
     for file_name in os.listdir(folder):
-        img = cv2.imread(os.path.join(folder, file_name))
+        img = decode_and_resize(os.path.join(folder, file_name))
         if img is not None:
-            img = cv2.resize(img, IMAGE_SIZE)
             images.append(img)
     return images
 
 
 def fill_image():
-    window['-IMAGE-'].update(data=cv2.imencode('.png', image)[1].tobytes())
+    window['-IMAGE-'].update(data=cv2.imencode('.png', transform_img_255(image))[1].tobytes())
 
 
 def fill_style():
-    window['-STYLE-'].update(data=cv2.imencode('.png', style)[1].tobytes())
+    window['-STYLE-'].update(data=cv2.imencode('.png', transform_img_255(style))[1].tobytes())
 
 
 def fill_result():
-    window['-RESULT-'].update(data=cv2.imencode('.png', result)[1].tobytes())
+    if recording:
+        window['-RESULT-'].update(data=cv2.imencode('.png', result)[1].tobytes())
+    else:
+        window['-RESULT-'].update(data=cv2.imencode('.png', transform_img_255(result))[1].tobytes())
 
 
 def clear_result():
@@ -63,7 +85,7 @@ def fill_template():
     for current_choose_index in range(MAX_TEMPLATES_IN_PAGE):
         current_template_idx = get_template_index(current_choose_index)
         if current_template_idx < len(templates_list):
-            current_image = cv2.resize(templates_list[current_template_idx], TEMPLATE_IMAGE_SIZE)
+            current_image = cv2.resize(transform_img_255(templates_list[current_template_idx]), TEMPLATE_IMAGE_SIZE)
             window[f'-BTN TEMPLATE {current_choose_index}-'].update(
                 image_data=cv2.imencode('.png', current_image)[1].tobytes(), disabled=False)
         else:
@@ -77,6 +99,10 @@ image = None
 style = None
 result = None
 recording = False
+
+# MODEL
+dir = "decoder_model"  # name folder
+model = load_neural_model(dir)
 
 templates_list = get_all_styles()
 
@@ -192,8 +218,8 @@ while True:
         file_path = sg.popup_get_file(message='', no_window=True, file_types=(('Image Files', '*.jpg; *.png'),))
         if file_path:
             try:
-                image = cv2.imread(file_path)
-                image = cv2.resize(image, IMAGE_SIZE)
+                image = decode_and_resize(file_path)
+
                 fill_image()
             except Exception as e:
                 sg.popup_error(e)
@@ -204,8 +230,8 @@ while True:
         file_path = sg.popup_get_file(message='', no_window=True, file_types=(('Image Files', '*.jpg; *.png'),))
         if file_path:
             try:
-                style = cv2.imread(file_path)
-                style = cv2.resize(style, IMAGE_SIZE)
+                style = decode_and_resize(file_path)
+
                 fill_style()
             except Exception as e:
                 sg.popup_error(e)
@@ -214,7 +240,7 @@ while True:
     # Thực hiện combine
     if event == '-BTN COMBINE-':
         try:
-            result = image
+
             if image is None:
                 sg.popup_ok("Image is empty!", no_titlebar=True, background_color='red', text_color='white')
                 continue
@@ -222,6 +248,7 @@ while True:
             if style is None:
                 sg.popup_ok("Style is empty!", no_titlebar=True, background_color='red', text_color='white')
                 continue
+            result = model.predict(style, image)
 
             if image is not None:
                 fill_result()
@@ -235,8 +262,12 @@ while True:
             file_name = sg.popup_get_file(message='', no_window=True, save_as=True, file_types=(("PNG File", '*.png'),))
             current_capture_img = result
             if file_name:
-                if cv2.imwrite(file_name, current_capture_img):
-                    sg.popup_ok('Image saved successfully')
+                if recording:
+                    if cv2.imwrite(file_name, current_capture_img):
+                        sg.popup_ok('Image saved successfully')
+                else:
+                    if cv2.imwrite(file_name, transform_img_255(current_capture_img)):
+                        sg.popup_ok('Image saved successfully')
 
         except Exception as e:
             sg.popup_error(e)
