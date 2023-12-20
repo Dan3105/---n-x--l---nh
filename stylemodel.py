@@ -71,7 +71,7 @@ def get_mean_std(x, epsilon=1e-5):
   std = tf.sqrt(variance + epsilon)
   return mean, std
 
-def ada_in(style, content):
+def ada_in(style, content, alpha = 1.0):
   """
   style: (n, w, h, c) -> encoder output
   content: (n, w, h, c) -> //
@@ -82,8 +82,7 @@ def ada_in(style, content):
   content_mean, content_std = get_mean_std(content)
   style_mean, style_std = get_mean_std(style)
   t = style_std * (content - content_mean) / content_std + style_mean
-  print(t.get_shape())
-  return t
+  return t * alpha + content *(1 - alpha)
 
 class NeuralStyleTransfer(tf.keras.Model):
   def __init__(self, encoder, decoder, loss_net, style_weight, **kwargs):
@@ -176,7 +175,7 @@ class NeuralStyleTransfer(tf.keras.Model):
         }
 
   #accept only image size 224,224, 3
-  def predict(self, style_image, content_image):
+  def predict(self, style_image, content_image, alpha = 0.9):
     style_image = np.expand_dims(style_image, axis=0)
     content_image = np.expand_dims(content_image, axis=0)
 
@@ -184,11 +183,11 @@ class NeuralStyleTransfer(tf.keras.Model):
     style_encode = self.encoder(style_image)
     content_encode = self.encoder(content_image)
 
-    t = ada_in(style_encode, content_encode)
+    t = ada_in(style_encode, content_encode, alpha)
 
     result = self.decoder(t)
 
-    return result[0]
+    return result[0].numpy()
 
   @property
   def metrics(self):

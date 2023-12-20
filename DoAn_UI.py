@@ -102,7 +102,8 @@ recording = False
 filtering = False
 
 # MODEL
-dir = "decoder_model"  # name folder
+# dir = "decoder_model"  # name folder
+dir = "my_model_collection/decoder_model_002"
 model = load_neural_model(dir)
 
 templates_list = get_all_styles()
@@ -342,7 +343,7 @@ while True:
         result = cv2.resize(result, IMAGE_SIZE)
         if filtering:
             result = cv2.cvtColor(result, cv2.COLOR_RGB2BGR)
-            result = model.predict(style, result)
+            result = model.predict(style, result, 1)
             result = transform_img_255(result)
 
         fill_result()
