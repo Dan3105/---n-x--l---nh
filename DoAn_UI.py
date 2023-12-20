@@ -5,9 +5,8 @@ from PIL import ImageColor, Image
 import os
 import tensorflow as tf
 from stylemodel import load_neural_model, NeuralStyleTransfer
-
+from model_segmentation import ModelSegmentation
 MAX_TEMPLATES_IN_PAGE = 8
-
 # SIZE
 WINDOW_SIZE = (820, 800)
 BTN_SIZE = (11, 1)
@@ -15,6 +14,7 @@ BTN_MOVE_SIZE = (2, 2)
 BTN_TEMPLATE_SIZE = (9, 3)
 IMAGE_SIZE = (224, 224)
 TEMPLATE_IMAGE_SIZE = (78, 54)
+DEFAULT_ALPHA = 0.95
 
 # COLOR
 TEXT_COLOR = 'black'
@@ -64,6 +64,8 @@ def fill_style():
 
 
 def fill_result():
+    if result is None:
+        return
     if recording:
         window['-RESULT-'].update(data=cv2.imencode('.png', result)[1].tobytes())
     else:
@@ -100,12 +102,14 @@ style = None
 result = None
 recording = False
 filtering = False
+mode_segment = False
 
+alpha = DEFAULT_ALPHA
 # MODEL
 # dir = "decoder_model"  # name folder
 dir = "my_model_collection/decoder_model_002"
 model = load_neural_model(dir)
-
+model_segmentation = ModelSegmentation()
 templates_list = get_all_styles()
 
 current_page = 1
@@ -150,6 +154,9 @@ btn_capture_gui = sg.Button(size=BTN_SIZE
 btn_filter_gui = sg.Button(size=BTN_SIZE
                             , button_text='Apply Filter'
                             , key='-BTN APPLY FILTER-')
+btn_segment_gui = sg.Button(size=BTN_SIZE
+                            , button_text='Segment'
+                            , key='-BTN APPLY SEGMENT-')
 
 template_description = sg.Text(text='Choose Template'
                                , text_color=TEXT_COLOR)
@@ -165,6 +172,8 @@ btn_move_right = sg.Button(size=BTN_MOVE_SIZE
 pages_description = sg.Text(text=f'Trang 1 / {max_page}'
                             , text_color=TEXT_COLOR
                             , key='-PAGES DESCRIPTION-')
+
+slider_alpha = sg.Frame('Alpha', layout=[[sg.Slider(range=(0, 1), resolution=.05, default_value=DEFAULT_ALPHA, orientation = 'horizontal', enable_events=True, key='-SLIDER-')]])
 
 # Nơi chọn Image và Style
 control_column = sg.Column([
@@ -182,7 +191,9 @@ result_column = sg.Column([
     [result_description]
     , [result_gui]
     , [btn_combine_gui, btn_save_gui]
-    , [btn_capture_gui, btn_filter_gui]
+    , [btn_capture_gui]
+    , [btn_filter_gui, btn_segment_gui]
+    , [slider_alpha]
 ], justification="center")
 
 # Nơi chứa những khung ảnh
@@ -204,11 +215,12 @@ full_layout = [
 ]
 
 window = sg.Window("Art generation", full_layout, size=WINDOW_SIZE, finalize=True)
-
+video = cv2.VideoCapture(0)
 # Khởi tạo dữ liệu trước khi mở window
 window['-BTN MOVE LEFT-'].update(disabled=True)
 window['-BTN SAVE-'].update(disabled=True)
 window['-BTN APPLY FILTER-'].update(disabled=True)
+window['-BTN APPLY SEGMENT-'].update(disabled=True)
 if max_page == 1:
     window['-BTN MOVE RIGHT-'].update(disabled=True)
 
@@ -255,7 +267,7 @@ while True:
             if style is None:
                 sg.popup_ok("Style is empty!", no_titlebar=True, background_color='red', text_color='white')
                 continue
-            result = model.predict(style, image)
+            result = model.predict(style, image, alpha)
 
             if image is not None:
                 fill_result()
@@ -287,18 +299,22 @@ while True:
             window['-BTN COMBINE-'].update(disabled=False)
             window['-BTN OPEN CAMERA-'].update(button_color=DEFAULT_BTN_COLOR)
             window['-BTN APPLY FILTER-'].update(disabled=True)
-            video.release()
+            window['-BTN APPLY SEGMENT-'].update(disabled=True)
+            #video.release()
         # Xử lý khi đang tắt cam
         else:
             window['-BTN COMBINE-'].update(disabled=True)
             window['-BTN OPEN CAMERA-'].update(button_color=CAPTURING_BTN_COLOR)
             window['-BTN APPLY FILTER-'].update(disabled=False)
-            video = cv2.VideoCapture(0)
-        filtering = False
+            window['-BTN APPLY SEGMENT-'].update(disabled=False)
+            #video = cv2.VideoCapture(0)
+        filtering = mode_segment = False
         window['-BTN APPLY FILTER-'].update(button_color=DEFAULT_BTN_COLOR)
+        window['-BTN APPLY SEGMENT-'].update(button_color=DEFAULT_BTN_COLOR)
         clear_result()
         recording = not recording
 
+    # Xử lý khi nhấn nút Apply filter
     if event == '-BTN APPLY FILTER-':
         if filtering:
             window['-BTN APPLY FILTER-'].update(button_color=DEFAULT_BTN_COLOR)
@@ -309,6 +325,19 @@ while True:
             window['-BTN APPLY FILTER-'].update(button_color=CAPTURING_BTN_COLOR)
         filtering = not filtering
 
+    # Xử lý khi nhấn nút Apply Segment
+    if event == '-BTN APPLY SEGMENT-':
+        if mode_segment:
+            window['-BTN APPLY SEGMENT-'].update(button_color=DEFAULT_BTN_COLOR)
+        else:
+            window['-BTN APPLY SEGMENT-'].update(button_color=CAPTURING_BTN_COLOR)
+        mode_segment = not mode_segment
+
+    if event == '-SLIDER-':
+        alpha = values['-SLIDER-']
+        if not recording:
+            result = model.predict(style, image, alpha)
+            fill_result()
 
     # Xử lý khi chọn style
     for current_index in range(MAX_TEMPLATES_IN_PAGE):
@@ -341,9 +370,24 @@ while True:
         _, result = video.read()
 
         result = cv2.resize(result, IMAGE_SIZE)
-        if filtering:
-            result = cv2.cvtColor(result, cv2.COLOR_RGB2BGR)
-            result = model.predict(style, result, 1)
-            result = transform_img_255(result)
+        if filtering and mode_segment:
+            # clear background: segment on - filter on
+            image_filter = model.predict(style, result, alpha)
+            image_filter = transform_img_255(image_filter)
+            segment_object = np.expand_dims(model_segmentation.predict(result), axis=-1)
+            segment_object = np.repeat(segment_object, 3, axis=-1)
+            segment_object_filter = segment_object * image_filter
+            segment_background = result - segment_object * result
+            result = segment_object_filter + segment_background
+        elif mode_segment:
+            # clear background: segment on - filter off
+            segment_object = np.expand_dims(model_segmentation.predict(result), axis=-1)
+            segment_object = np.repeat(segment_object, 3, axis=-1)
+            segment_object = segment_object * result
+            result = segment_object
+        elif filtering:
+            image_filter = model.predict(style, result, alpha)
+            image_filter = transform_img_255(image_filter)
+            result = image_filter
 
         fill_result()
