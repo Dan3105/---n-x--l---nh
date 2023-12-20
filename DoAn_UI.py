@@ -99,6 +99,7 @@ image = None
 style = None
 result = None
 recording = False
+filtering = False
 
 # MODEL
 dir = "decoder_model"  # name folder
@@ -143,7 +144,11 @@ btn_save_gui = sg.Button(size=BTN_SIZE
                          , key='-BTN SAVE-')
 btn_capture_gui = sg.Button(size=BTN_SIZE
                             , button_text='Open Camera'
-                            , key='-BTN Open Camera-')
+                            , key='-BTN OPEN CAMERA-')
+
+btn_filter_gui = sg.Button(size=BTN_SIZE
+                            , button_text='Apply Filter'
+                            , key='-BTN APPLY FILTER-')
 
 template_description = sg.Text(text='Choose Template'
                                , text_color=TEXT_COLOR)
@@ -176,7 +181,7 @@ result_column = sg.Column([
     [result_description]
     , [result_gui]
     , [btn_combine_gui, btn_save_gui]
-    , [btn_capture_gui]
+    , [btn_capture_gui, btn_filter_gui]
 ], justification="center")
 
 # Nơi chứa những khung ảnh
@@ -197,11 +202,12 @@ full_layout = [
     , [template_layout]
 ]
 
-window = sg.Window("Test", full_layout, size=WINDOW_SIZE, finalize=True)
+window = sg.Window("Art generation", full_layout, size=WINDOW_SIZE, finalize=True)
 
 # Khởi tạo dữ liệu trước khi mở window
 window['-BTN MOVE LEFT-'].update(disabled=True)
 window['-BTN SAVE-'].update(disabled=True)
+window['-BTN APPLY FILTER-'].update(disabled=True)
 if max_page == 1:
     window['-BTN MOVE RIGHT-'].update(disabled=True)
 
@@ -209,7 +215,7 @@ fill_template()
 
 # Mở window
 while True:
-    event, values = window.read(timeout=20)
+    event, values = window.read(timeout=10)
     if event == sg.WIN_CLOSED:  # There is no key call Exit so event == "Exit" is unimportant
         break
 
@@ -274,19 +280,34 @@ while True:
             print(e)
 
     # Xử lý khi nhấn nút Open Camera
-    if event == '-BTN Open Camera-':
+    if event == '-BTN OPEN CAMERA-':
         # Xử lý khi đang bật cam
         if recording:
             window['-BTN COMBINE-'].update(disabled=False)
-            window['-BTN Open Camera-'].update(button_color=DEFAULT_BTN_COLOR)
+            window['-BTN OPEN CAMERA-'].update(button_color=DEFAULT_BTN_COLOR)
+            window['-BTN APPLY FILTER-'].update(disabled=True)
             video.release()
         # Xử lý khi đang tắt cam
         else:
             window['-BTN COMBINE-'].update(disabled=True)
-            window['-BTN Open Camera-'].update(button_color=CAPTURING_BTN_COLOR)
+            window['-BTN OPEN CAMERA-'].update(button_color=CAPTURING_BTN_COLOR)
+            window['-BTN APPLY FILTER-'].update(disabled=False)
             video = cv2.VideoCapture(0)
+        filtering = False
+        window['-BTN APPLY FILTER-'].update(button_color=DEFAULT_BTN_COLOR)
         clear_result()
         recording = not recording
+
+    if event == '-BTN APPLY FILTER-':
+        if filtering:
+            window['-BTN APPLY FILTER-'].update(button_color=DEFAULT_BTN_COLOR)
+        else:
+            if style is None:
+                sg.popup_ok("Style is empty!", no_titlebar=True, background_color='red', text_color='white')
+                continue
+            window['-BTN APPLY FILTER-'].update(button_color=CAPTURING_BTN_COLOR)
+        filtering = not filtering
+
 
     # Xử lý khi chọn style
     for current_index in range(MAX_TEMPLATES_IN_PAGE):
@@ -317,5 +338,11 @@ while True:
 
     if recording:
         _, result = video.read()
+
         result = cv2.resize(result, IMAGE_SIZE)
+        if filtering:
+            result = cv2.cvtColor(result, cv2.COLOR_RGB2BGR)
+            result = model.predict(style, result)
+            result = transform_img_255(result)
+
         fill_result()
